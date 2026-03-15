@@ -7,5 +7,7 @@ pub mod active_connections;
 pub mod port_scanner;
 pub mod interface_scanner;
 pub mod network_utils;
+pub mod network_scanner;
 
 pub use active_connections::ActiveConnectionScanner;
+pub use network_scanner::NetworkScanner;

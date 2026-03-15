@@ -19,7 +19,7 @@ mod display;
 
 use crate::config::{ConfigManager, NetworkMonitorConfig, OutputFormat, SortBy};
 use crate::error::Result;
-use crate::scanner::ActiveConnectionScanner;
+use crate::scanner::{ActiveConnectionScanner, NetworkScanner};
 use crate::enricher::{DnsResolver, GeoIpLookup};
 use crate::display::{ConnectionDisplay, DisplayConfig};
 use crate::strucs::net_strucs::Connection;
@@ -32,18 +32,14 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 /// Application version
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Application name
-const NAME: &str = env!("CARGO_PKG_NAME");
-
 /// Application description
 const DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
 
-/// Main application structure
-struct NetworkMonitor {
+/// Main network monitor application
+pub struct NetworkMonitor {
     config: NetworkMonitorConfig,
-    #[allow(dead_code)]
-    config_manager: ConfigManager,
     connection_scanner: ActiveConnectionScanner,
+    network_scanner: NetworkScanner,
     dns_resolver: DnsResolver,
     geoip_lookup: GeoIpLookup,
     display: ConnectionDisplay,
@@ -62,6 +58,10 @@ impl NetworkMonitor {
 
         // Initialize components
         let connection_scanner = ActiveConnectionScanner::new(config.network.clone());
+        let network_scanner = NetworkScanner::new(
+            config.network.connection_timeout_ms,
+            config.performance.worker_threads.unwrap_or(4)
+        );
         let dns_resolver = DnsResolver::new();
         let geoip_lookup = Self::init_geoip(&config.geoip)?;
         
@@ -74,12 +74,12 @@ impl NetworkMonitor {
         };
         let display = ConnectionDisplay::new(display_config);
 
-        info!("Network Monitor v{} initialized", VERSION);
+        info!("NetSight v{} initialized", VERSION);
 
         Ok(Self {
             config,
-            config_manager,
             connection_scanner,
+            network_scanner,
             dns_resolver,
             geoip_lookup,
             display,
@@ -130,7 +130,7 @@ impl NetworkMonitor {
 
                 let file_appender = tracing_appender::rolling::daily(
                     log_file.parent().unwrap_or_else(|| std::path::Path::new(".")),
-                    log_file.file_name().unwrap_or_else(|| std::ffi::OsStr::new("netmon.log")),
+                    log_file.file_name().unwrap_or_else(|| std::ffi::OsStr::new("netsight.log")),
                 );
 
                 tracing_subscriber::registry()
@@ -181,7 +181,7 @@ impl NetworkMonitor {
 
     /// Run the network monitor
     async fn run(&mut self) -> Result<()> {
-        info!("Starting network monitoring scan");
+        info!("Starting NetSight network monitoring scan");
 
         // Perform initial scan
         let connections = self.scan_and_enrich().await?;
@@ -192,13 +192,83 @@ impl NetworkMonitor {
         // Show statistics
         self.display_statistics(&connections)?;
 
+        // Check for alerts
+        self.check_alerts(&connections)?;
+
+        Ok(())
+    }
+
+    /// Check for security alerts based on configuration
+    fn check_alerts(&self, connections: &[Connection]) -> Result<()> {
+        let mut alerts_triggered = false;
+
+        // Check connection count threshold
+        if let Some(threshold) = self.config.display.alert_threshold {
+            if connections.len() > threshold {
+                println!("🚨 ALERT: Connection count ({}) exceeds threshold ({})", connections.len(), threshold);
+                alerts_triggered = true;
+            }
+        }
+
+        // Check for suspicious ports
+        let suspicious_ports = [4444, 1337, 31337, 6667, 5555, 12345, 54321];
+        for conn in connections {
+            if suspicious_ports.contains(&conn.remote_addr.port()) {
+                println!("🚨 ALERT: Suspicious port {} detected from process {} ({})", 
+                    conn.remote_addr.port(), conn.process_name, conn.remote_addr);
+                alerts_triggered = true;
+            }
+        }
+
+        // Check for unusual number of connections from single process
+        let mut process_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for conn in connections {
+            *process_counts.entry(conn.process_name.clone()).or_insert(0) += 1;
+        }
+
+        for (process, count) in process_counts {
+            if count > 50 { // Unusually high connection count
+                println!("🚨 ALERT: Process {} has {} connections (potential issue)", process, count);
+                alerts_triggered = true;
+            }
+        }
+
+        if alerts_triggered {
+            println!("⚠️  Security alerts detected. Review the connections above.");
+        }
+
         Ok(())
     }
 
     /// Scan for connections and enrich them with additional data
     async fn scan_and_enrich(&mut self) -> Result<Vec<Connection>> {
-        let mut connections = self.connection_scanner.scan_connections().await?;
-        info!("Found {} network connections", connections.len());
+        let mut connections = Vec::new();
+
+        // Check if we should perform network scanning
+        if let Some(network) = &self.config.display.scan_network {
+            info!("Scanning network range: {}", network);
+            let ports = if self.config.display.scan_ports.is_empty() {
+                crate::scanner::network_scanner::COMMON_PORTS.to_vec()
+            } else {
+                self.config.display.scan_ports.clone()
+            };
+            
+            match self.network_scanner.scan_network(network, &ports).await {
+                Ok(results) => {
+                    connections.extend(self.network_scanner.results_to_connections(&results));
+                    info!("Network scan found {} hosts with open ports", results.len());
+                }
+                Err(e) => {
+                    warn!("Network scan failed: {}", e);
+                }
+            }
+        }
+
+        // Perform regular connection scanning
+        let mut system_connections = self.connection_scanner.scan_connections().await?;
+        connections.append(&mut system_connections);
+
+        info!("Found {} total network connections", connections.len());
 
         // Enrich with DNS resolution
         if self.config.dns.enabled {
@@ -262,6 +332,11 @@ impl NetworkMonitor {
             connections.retain(|conn| conn.remote_addr.port() == filter_port);
         }
 
+        // Filter by IP address (supports CIDR notation)
+        if let Some(filter_ip) = &self.config.display.filter_ip {
+            connections.retain(|conn| self.matches_ip_filter(&conn.remote_addr.ip(), filter_ip));
+        }
+
         // Sort connections
         connections.sort_by(|a, b| self.compare_connections(a, b));
 
@@ -271,6 +346,57 @@ impl NetworkMonitor {
         }
 
         connections
+    }
+
+    /// Check if IP matches filter (supports CIDR notation)
+    fn matches_ip_filter(&self, ip: &std::net::IpAddr, filter: &str) -> bool {
+        if filter.contains('/') {
+            // CIDR notation
+            if let Ok((network, prefix)) = self.parse_cidr(filter) {
+                self.ip_in_network(ip, &network, prefix)
+            } else {
+                false
+            }
+        } else {
+            // Single IP
+            if let Ok(filter_ip) = filter.parse::<std::net::IpAddr>() {
+                ip == &filter_ip
+            } else {
+                false
+            }
+        }
+    }
+
+    /// Parse CIDR notation into network and prefix length
+    fn parse_cidr(&self, cidr: &str) -> std::result::Result<(std::net::IpAddr, u32), Box<dyn std::error::Error>> {
+        let parts: Vec<&str> = cidr.split('/').collect();
+        if parts.len() != 2 {
+            return Err("Invalid CIDR format".into());
+        }
+
+        let network = parts[0].parse::<std::net::IpAddr>()?;
+        let prefix = parts[1].parse::<u32>()?;
+
+        Ok((network, prefix))
+    }
+
+    /// Check if IP is in the given network
+    fn ip_in_network(&self, ip: &std::net::IpAddr, network: &std::net::IpAddr, prefix: u32) -> bool {
+        match (ip, network) {
+            (std::net::IpAddr::V4(ip), std::net::IpAddr::V4(network)) => {
+                let ip_u32 = u32::from(*ip);
+                let network_u32 = u32::from(*network);
+                let mask = if prefix == 0 { 0 } else { !0u32 << (32 - prefix) };
+                (ip_u32 & mask) == (network_u32 & mask)
+            }
+            (std::net::IpAddr::V6(ip), std::net::IpAddr::V6(network)) => {
+                let ip_u128 = u128::from(*ip);
+                let network_u128 = u128::from(*network);
+                let mask = if prefix == 0 { 0 } else { !0u128 << (128 - prefix) };
+                (ip_u128 & mask) == (network_u128 & mask)
+            }
+            _ => false,
+        }
     }
 
     /// Compare two connections for sorting
@@ -387,9 +513,10 @@ fn escape_xml(s: &str) -> String {
 
 /// Create and configure the CLI application
 fn create_cli() -> Command {
-    Command::new(NAME)
+    Command::new("netsight")
         .version(VERSION)
-        .about(DESCRIPTION)
+        .about("A free, open-source, per-process network monitor for macOS")
+        .long_about(DESCRIPTION)
         .arg(
             Arg::new("config")
                 .short('c')
@@ -421,6 +548,40 @@ fn create_cli() -> Command {
                 .value_parser(clap::value_parser!(u16))
         )
         .arg(
+            Arg::new("filter-ip")
+                .short('i')
+                .long("filter-ip")
+                .value_name("IP")
+                .help("Filter by IP address (supports CIDR notation)")
+        )
+        .arg(
+            Arg::new("scan-network")
+                .short('n')
+                .long("scan-network")
+                .value_name("NETWORK")
+                .help("Scan specific network range (e.g., 192.168.1.0/24)")
+        )
+        .arg(
+            Arg::new("scan-ports")
+                .long("scan-ports")
+                .value_name("PORTS")
+                .help("Scan specific ports on target (comma-separated, e.g., 22,80,443)")
+        )
+        .arg(
+            Arg::new("monitor-mode")
+                .short('m')
+                .long("monitor")
+                .help("Enable continuous monitoring mode")
+                .action(clap::ArgAction::SetTrue)
+        )
+        .arg(
+            Arg::new("alert-threshold")
+                .long("alert-threshold")
+                .value_name("COUNT")
+                .help("Alert when connection count exceeds threshold")
+                .value_parser(clap::value_parser!(usize))
+        )
+        .arg(
             Arg::new("verbose")
                 .short('v')
                 .long("verbose")
@@ -450,7 +611,7 @@ async fn main() {
     let mut monitor = match NetworkMonitor::new() {
         Ok(monitor) => monitor,
         Err(e) => {
-            eprintln!("Failed to initialize network monitor: {}", e);
+            eprintln!("Failed to initialize NetSight: {}", e);
             if let Some(suggestion) = e.user_suggestion() {
                 eprintln!("Suggestion: {}", suggestion);
             }
@@ -470,6 +631,29 @@ async fn main() {
 
     if let Some(filter_port) = matches.get_one::<u16>("filter-port") {
         monitor.config.display.filter_port = Some(*filter_port);
+    }
+
+    if let Some(filter_ip) = matches.get_one::<String>("filter-ip") {
+        monitor.config.display.filter_ip = Some(filter_ip.clone());
+    }
+
+    if let Some(scan_network) = matches.get_one::<String>("scan-network") {
+        monitor.config.display.scan_network = Some(scan_network.clone());
+    }
+
+    if let Some(scan_ports) = matches.get_one::<String>("scan-ports") {
+        let ports: Vec<u16> = scan_ports.split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+        monitor.config.display.scan_ports = ports;
+    }
+
+    if matches.get_flag("monitor-mode") {
+        monitor.config.display.monitor_mode = true;
+    }
+
+    if let Some(alert_threshold) = matches.get_one::<usize>("alert-threshold") {
+        monitor.config.display.alert_threshold = Some(*alert_threshold);
     }
 
     if matches.get_flag("no-dns") {

@@ -1,11 +1,11 @@
 [package]
-name = "network-monitor"
+name = "netsight"
 version = "0.1.0"
 edition = "2021"
-authors = ["Network Monitor Contributors"]
+authors = ["NetSight Contributors"]
 description = "A free, open-source, per-process network monitor for macOS"
 license = "MIT"
-repository = "https://github.com/example/network-monitor"
+repository = "https://github.com/BrentWebEU/netsight"
 keywords = ["network", "monitoring", "security", "macos"]
 categories = ["network-programming", "command-line-utilities"]
 
@@ -51,5 +51,5 @@ tempfile = "3.0"
 pretty_assertions = "1.0"
 
 [[bin]]
-name = "netmon"
+name = "netsight"
 path = "src/main.rs"

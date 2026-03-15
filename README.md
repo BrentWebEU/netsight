@@ -1,4 +1,4 @@
-# Network Monitor (netmon)
+# NetSight (netsight)
 
 A free, open-source, per-process network monitor for macOS - an open-source alternative to Little Snitch.
 
@@ -15,7 +15,7 @@ This tool provides real-time network connection monitoring per process with DNS 
 ## Sample Output
 
 ```
-$ netmon
+$ netsight
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ PID    PROCESS           REMOTE                    PORT   STATE   LOCATION │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -35,7 +35,7 @@ Connections: 47 | Processes: 12 | Bandwidth: ↓ 2.3 MB/s ↑ 156 KB/s
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         Network Monitor                              │
+│                            NetSight                                 │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                      │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────────────┐  │

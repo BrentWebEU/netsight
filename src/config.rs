@@ -9,10 +9,10 @@ use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
 /// Default configuration file name
-pub const DEFAULT_CONFIG_FILE: &str = "netmon.toml";
+pub const DEFAULT_CONFIG_FILE: &str = "netsight.toml";
 
 /// Default configuration directory
-pub const DEFAULT_CONFIG_DIR: &str = ".config/netmon";
+pub const DEFAULT_CONFIG_DIR: &str = ".config/netsight";
 
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +165,16 @@ pub struct DisplayConfig {
     pub filter_process: Option<String>,
     /// Filter by port
     pub filter_port: Option<u16>,
+    /// Filter by IP address (supports CIDR)
+    pub filter_ip: Option<String>,
+    /// Scan specific network range
+    pub scan_network: Option<String>,
+    /// Scan specific ports
+    pub scan_ports: Vec<u16>,
+    /// Monitor mode (continuous monitoring)
+    pub monitor_mode: bool,
+    /// Alert threshold for connection count
+    pub alert_threshold: Option<usize>,
 }
 
 impl Default for DisplayConfig {
@@ -181,6 +191,11 @@ impl Default for DisplayConfig {
             sort_by: SortBy::RemoteAddress,
             filter_process: None,
             filter_port: None,
+            filter_ip: None,
+            scan_network: None,
+            scan_ports: Vec::new(),
+            monitor_mode: false,
+            alert_threshold: None,
         }
     }
 }
@@ -268,7 +283,7 @@ impl Default for LoggingConfig {
             level: "info".to_string(),
             format: LogFormat::Pretty,
             log_to_file: false,
-            log_file: Some(PathBuf::from("logs/netmon.log")),
+            log_file: Some(PathBuf::from("logs/netsight.log")),
             console_logging: true,
             structured: false,
         }
@@ -394,7 +409,7 @@ impl ConfigManager {
     fn get_config_file_path(&self) -> Option<PathBuf> {
         // Check various locations in order of preference
         let paths = vec![
-            std::env::var("NETMON_CONFIG").ok().map(PathBuf::from),
+            std::env::var("NETSIGHT_CONFIG").ok().map(PathBuf::from),
             dirs::home_dir().map(|h| h.join(DEFAULT_CONFIG_DIR).join(DEFAULT_CONFIG_FILE)),
             Some(PathBuf::from(DEFAULT_CONFIG_FILE)),
         ];
@@ -433,35 +448,35 @@ impl ConfigManager {
     /// Apply environment variable overrides
     fn apply_env_overrides(&self, config: &mut NetworkMonitorConfig) -> Result<()> {
         // Network settings
-        if let Ok(interval) = std::env::var("NETMON_SCAN_INTERVAL") {
+        if let Ok(interval) = std::env::var("NETSIGHT_SCAN_INTERVAL") {
             config.network.scan_interval_ms = interval
                 .parse()
-                .map_err(|_| NetworkMonitorError::validation("Invalid NETMON_SCAN_INTERVAL"))?;
+                .map_err(|_| NetworkMonitorError::validation("Invalid NETSIGHT_SCAN_INTERVAL"))?;
         }
 
         // DNS settings
-        if let Ok(enabled) = std::env::var("NETMON_DNS_ENABLED") {
+        if let Ok(enabled) = std::env::var("NETSIGHT_DNS_ENABLED") {
             config.dns.enabled = enabled
                 .parse()
-                .map_err(|_| NetworkMonitorError::validation("Invalid NETMON_DNS_ENABLED"))?;
+                .map_err(|_| NetworkMonitorError::validation("Invalid NETSIGHT_DNS_ENABLED"))?;
         }
 
         // GeoIP settings
-        if let Ok(enabled) = std::env::var("NETMON_GEOIP_ENABLED") {
+        if let Ok(enabled) = std::env::var("NETSIGHT_GEOIP_ENABLED") {
             config.geoip.enabled = enabled
                 .parse()
-                .map_err(|_| NetworkMonitorError::validation("Invalid NETMON_GEOIP_ENABLED"))?;
+                .map_err(|_| NetworkMonitorError::validation("Invalid NETSIGHT_GEOIP_ENABLED"))?;
         }
 
         // Display settings
-        if let Ok(format) = std::env::var("NETMON_OUTPUT_FORMAT") {
+        if let Ok(format) = std::env::var("NETSIGHT_OUTPUT_FORMAT") {
             config.display.output_format = format
                 .parse()
-                .map_err(|_| NetworkMonitorError::validation("Invalid NETMON_OUTPUT_FORMAT"))?;
+                .map_err(|_| NetworkMonitorError::validation("Invalid NETSIGHT_OUTPUT_FORMAT"))?;
         }
 
         // Logging settings
-        if let Ok(level) = std::env::var("NETMON_LOG_LEVEL") {
+        if let Ok(level) = std::env::var("NETSIGHT_LOG_LEVEL") {
             config.logging.level = level;
         }
 
