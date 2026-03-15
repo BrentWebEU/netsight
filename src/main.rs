@@ -16,6 +16,7 @@ mod enricher;
 mod config;
 mod error;
 mod display;
+mod alerts;
 
 use crate::config::{ConfigManager, NetworkMonitorConfig, OutputFormat, SortBy};
 use crate::error::Result;
@@ -43,6 +44,7 @@ pub struct NetworkMonitor {
     dns_resolver: DnsResolver,
     geoip_lookup: GeoIpLookup,
     display: ConnectionDisplay,
+    alert_engine: crate::alerts::AlertEngine,
 }
 
 impl NetworkMonitor {
@@ -64,6 +66,7 @@ impl NetworkMonitor {
         );
         let dns_resolver = DnsResolver::new();
         let geoip_lookup = Self::init_geoip(&config.geoip)?;
+        let alert_engine = crate::alerts::AlertEngine::with_config(config.alerts.max_alerts);
         
         // Initialize display
         let display_config = DisplayConfig {
@@ -83,6 +86,7 @@ impl NetworkMonitor {
             dns_resolver,
             geoip_lookup,
             display,
+            alert_engine,
         })
     }
 
@@ -198,46 +202,60 @@ impl NetworkMonitor {
         Ok(())
     }
 
-    /// Check for security alerts based on configuration
-    fn check_alerts(&self, connections: &[Connection]) -> Result<()> {
-        let mut alerts_triggered = false;
-
-        // Check connection count threshold
-        if let Some(threshold) = self.config.display.alert_threshold {
-            if connections.len() > threshold {
-                println!("🚨 ALERT: Connection count ({}) exceeds threshold ({})", connections.len(), threshold);
-                alerts_triggered = true;
+    /// Check for security alerts using the alert engine
+    fn check_alerts(&mut self, connections: &[Connection]) -> Result<()> {
+        let alerts = self.alert_engine.process_connections(connections);
+        
+        if !alerts.is_empty() {
+            println!("\n🚨 SECURITY ALERTS DETECTED:");
+            println!("════════════════════════════════");
+            
+            for alert in &alerts {
+                self.display_alert(alert);
             }
-        }
-
-        // Check for suspicious ports
-        let suspicious_ports = [4444, 1337, 31337, 6667, 5555, 12345, 54321];
-        for conn in connections {
-            if suspicious_ports.contains(&conn.remote_addr.port()) {
-                println!("🚨 ALERT: Suspicious port {} detected from process {} ({})", 
-                    conn.remote_addr.port(), conn.process_name, conn.remote_addr);
-                alerts_triggered = true;
-            }
-        }
-
-        // Check for unusual number of connections from single process
-        let mut process_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        for conn in connections {
-            *process_counts.entry(conn.process_name.clone()).or_insert(0) += 1;
-        }
-
-        for (process, count) in process_counts {
-            if count > 50 { // Unusually high connection count
-                println!("🚨 ALERT: Process {} has {} connections (potential issue)", process, count);
-                alerts_triggered = true;
-            }
-        }
-
-        if alerts_triggered {
-            println!("⚠️  Security alerts detected. Review the connections above.");
+            
+            println!("════════════════════════════════");
+            println!("⚠️  Total alerts: {} | Review the connections above for details.", alerts.len());
         }
 
         Ok(())
+    }
+
+    /// Display a single alert
+    fn display_alert(&self, alert: &crate::alerts::Alert) {
+        let severity_icon = match alert.severity {
+            crate::alerts::AlertSeverity::Critical => "🔴",
+            crate::alerts::AlertSeverity::Warning => "🟡",
+            crate::alerts::AlertSeverity::Info => "🔵",
+        };
+
+        let category_icon = match alert.category {
+            crate::alerts::AlertCategory::Security => "🛡️",
+            crate::alerts::AlertCategory::Performance => "📊",
+            crate::alerts::AlertCategory::Anomaly => "⚠️",
+            crate::alerts::AlertCategory::Compliance => "📋",
+        };
+
+        println!("{} {} [{}] {}", 
+            severity_icon, 
+            alert.rule_name, 
+            format!("{:?}", alert.severity).to_uppercase(),
+            category_icon
+        );
+        println!("   📅 {}", alert.timestamp.format("%Y-%m-%d %H:%M:%S UTC"));
+        println!("   📝 {}", alert.message);
+        
+        if !alert.details.connections.is_empty() {
+            println!("   � Affected connections: {}", alert.details.connections.len());
+        }
+        
+        if !alert.details.metadata.is_empty() {
+            println!("   📊 Details:");
+            for (key, value) in &alert.details.metadata {
+                println!("      {}: {}", key, value);
+            }
+        }
+        println!();
     }
 
     /// Scan for connections and enrich them with additional data

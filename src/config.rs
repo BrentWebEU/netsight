@@ -217,6 +217,8 @@ pub struct AlertsConfig {
     pub alert_unusual_port: bool,
     /// Known malicious IP alert
     pub alert_malicious_ip: bool,
+    /// Maximum number of alerts to keep in history
+    pub max_alerts: usize,
 }
 
 impl Default for AlertsConfig {
@@ -229,6 +231,7 @@ impl Default for AlertsConfig {
             alert_new_process: true,
             alert_unusual_port: true,
             alert_malicious_ip: true,
+            max_alerts: 1000,
         }
     }
 }
