@@ -2,11 +2,54 @@
 name = "network-monitor"
 version = "0.1.0"
 edition = "2021"
+authors = ["Network Monitor Contributors"]
+description = "A free, open-source, per-process network monitor for macOS"
+license = "MIT"
+repository = "https://github.com/example/network-monitor"
+keywords = ["network", "monitoring", "security", "macos"]
+categories = ["network-programming", "command-line-utilities"]
 
 [dependencies]
+# Core dependencies
 libproc = "0.14.11"
 tokio = { version = "1.0", features = ["full"] }
 clap = { version = "4.0", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
+thiserror = "1.0"
+
+# Network operations
+socket2 = "0.5"
+local-ip = "0.1"
+dns-lookup = "2.0"
+
+# GeoIP functionality
+maxminddb = "0.24"
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tracing-appender = "0.2"
+
+# Configuration
+config = "0.14"
+toml = "0.8"
+
+# Async utilities
+futures = "0.3"
+
+# Performance and caching
+lru = "0.12"
+
+# System directories
+dirs = "5.0"
+
+[dev-dependencies]
+tempfile = "3.0"
+pretty_assertions = "1.0"
+
+[[bin]]
+name = "netmon"
+path = "src/main.rs"

@@ -1,13 +1,13 @@
 use std::net::SocketAddr;
 use libproc::net_info::TcpSIState;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub enum Protocol {
     Tcp,
     Udp,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub enum ConnectionState {
     Closed,
     Listen,
@@ -42,7 +42,7 @@ impl From<TcpSIState> for ConnectionState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Connection {
     pub pid: i32,
     pub process_name: String,

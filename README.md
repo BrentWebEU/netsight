@@ -96,10 +96,20 @@ Interactive terminal UI using `ratatui`.
 
 *Next: Implement actual network connection collection and DNS resolution in Milestone 2*
 
-### Milestone 2: Enrichment Foundation
-- [ ] DNS resolution with caching
-- [ ] GeoIP lookup (MaxMind GeoLite2)
-- [ ] Process name resolution
+### Milestone 2: Enrichment Foundation ✅
+- [x] DNS resolution with caching
+- [x] GeoIP lookup (DB-IP database)
+- [x] Process name resolution
+
+**Milestone 2 Summary**: Successfully implemented the enrichment foundation with:
+- DNS resolver with 5-minute cache and automatic cleanup
+- GeoIP lookup using open-source DB-IP database (no company dependency)
+- Process name resolution using libproc API
+- Complete enrichment pipeline: DNS → GeoIP → Process Names → Filters
+- GeoIP database loading and path resolution fixes
+- All enrichment components integrated and working
+
+*Next: Implement alert system in Milestone 3*
 
 ### Milestone 3: Alert System Base
 - [ ] Alert engine structure
